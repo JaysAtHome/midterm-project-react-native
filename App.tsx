@@ -1,20 +1,47 @@
-import { StatusBar } from 'expo-status-bar';
-import { StyleSheet, Text, View } from 'react-native';
+import React from 'react';
+import { NavigationContainer, DefaultTheme, DarkTheme } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import { RootStackParamList } from './src/navigation/roottypes';
+import { ThemeProvider } from './src/context/ThemeContext';
+import JobFinderScreen from './src/screens/JobFinderScreen';
+import SavedJobsScreen from './src/screens/SavedJobsScreen';
+import ApplicationForm from './src/screens/ApplicationForm';
+import { SavedJobsProvider } from './src/context/SavedJobsContext';
+import { useTheme } from './/src/context/ThemeContext';
+const Stack = createStackNavigator<RootStackParamList>();
 
-export default function App() {
+const App = () => {
+  const { theme } = useTheme();
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <StatusBar style="auto" />
-    </View>
+    <ThemeProvider>
+      <SavedJobsProvider>
+        <NavigationContainer theme={theme === 'dark' ? DarkTheme : DefaultTheme}>
+          <Stack.Navigator 
+            initialRouteName="JobFinder"
+            screenOptions={{
+              headerTitleAlign: 'center', // This centers all screen titles
+            }}
+          >
+            <Stack.Screen 
+              name="JobFinder" 
+              component={JobFinderScreen} 
+              options={{ title: 'Job Finder' }}
+            />
+            <Stack.Screen 
+              name="SavedJobs" 
+              component={SavedJobsScreen}
+              options={{ title: 'Saved Jobs' }}
+            />
+            <Stack.Screen 
+              name="ApplicationForm" 
+              component={ApplicationForm}
+              options={{ title: 'Application' }}
+            />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SavedJobsProvider>
+    </ThemeProvider>
   );
-}
+};
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-});
+export default App;
