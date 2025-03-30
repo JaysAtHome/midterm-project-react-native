@@ -1,34 +1,30 @@
-import React, { createContext, useState, useContext, useEffect } from "react";
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-interface Job {
-  id: string;
-  title: string;
-  companyName: string;
-  description: string;
-  minSalary: number | null;
-  maxSalary: number | null;
-}
+import { Job } from '../types/jobtypes';
 
 interface SavedJobsContextType {
   savedJobs: Job[];
-  savedJobsCount: number;
-  saveJob: (job: Job) => void;
-  removeJob: (jobId: string) => void;
-  isJobSaved: (jobId: string) => boolean; // New helper function
+  saveJob: (job: Job) => Promise<void>;
+  removeJob: (jobId: string) => Promise<void>;
+  isJobSaved: (jobId: string) => boolean;
 }
 
 const SavedJobsContext = createContext<SavedJobsContextType | undefined>(undefined);
 
-export const SavedJobsProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface SavedJobsProviderProps {
+  children: React.ReactNode;
+}
+
+export const SavedJobsProvider: React.FC<SavedJobsProviderProps> = ({ children }) => {
   const [savedJobs, setSavedJobs] = useState<Job[]>([]);
 
-  // Load saved jobs from storage on initial render
   useEffect(() => {
     const loadSavedJobs = async () => {
       try {
-        const saved = await AsyncStorage.getItem('savedJobs');
-        if (saved) setSavedJobs(JSON.parse(saved));
+        const storedJobs = await AsyncStorage.getItem('savedJobs');
+        if (storedJobs) {
+          setSavedJobs(JSON.parse(storedJobs));
+        }
       } catch (error) {
         console.error('Failed to load saved jobs:', error);
       }
@@ -36,51 +32,55 @@ export const SavedJobsProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     loadSavedJobs();
   }, []);
 
-  // Persist jobs to storage whenever they change
-  useEffect(() => {
-    const saveJobsToStorage = async () => {
-      try {
-        await AsyncStorage.setItem('savedJobs', JSON.stringify(savedJobs));
-      } catch (error) {
-        console.error('Failed to save jobs:', error);
+  const saveJob = useCallback(async (job: Job) => {
+    try {
+      const isAlreadySaved = savedJobs.some(savedJob => 
+        savedJob.id === job.id || 
+        (savedJob.title === job.title && savedJob.companyName === job.companyName)
+      );
+      
+      if (!isAlreadySaved) {
+        const updatedJobs = [...savedJobs, job];
+        setSavedJobs(updatedJobs);
+        await AsyncStorage.setItem('savedJobs', JSON.stringify(updatedJobs));
       }
-    };
-    saveJobsToStorage();
+    } catch (error) {
+      console.error('Failed to save job:', error);
+    }
   }, [savedJobs]);
 
-  const saveJob = (job: Job) => {
-    setSavedJobs((prev) => 
-      prev.some((saved) => saved.id === job.id) ? prev : [...prev, job]
-    );
-  };
+  const removeJob = useCallback(async (jobId: string) => {
+    try {
+      const updatedJobs = savedJobs.filter(job => job.id !== jobId);
+      setSavedJobs(updatedJobs);
+      await AsyncStorage.setItem('savedJobs', JSON.stringify(updatedJobs));
+    } catch (error) {
+      console.error('Failed to remove job:', error);
+    }
+  }, [savedJobs]);
 
-  const removeJob = (jobId: string) => {
-    setSavedJobs((prev) => prev.filter((job) => job.id !== jobId));
-  };
+  const isJobSaved = useCallback((jobId: string) => {
+    return savedJobs.some(job => job.id === jobId);
+  }, [savedJobs]);
 
-  const isJobSaved = (jobId: string) => {
-    return savedJobs.some((job) => job.id === jobId);
+  const contextValue = {
+    savedJobs,
+    saveJob,
+    removeJob,
+    isJobSaved
   };
 
   return (
-    <SavedJobsContext.Provider 
-      value={{
-        savedJobs,
-        savedJobsCount: savedJobs.length,
-        saveJob,
-        removeJob,
-        isJobSaved
-      }}
-    >
+    <SavedJobsContext.Provider value={contextValue}>
       {children}
     </SavedJobsContext.Provider>
   );
 };
 
-export const useSavedJobs = (): SavedJobsContextType => {
+export const useSavedJobs = () => {
   const context = useContext(SavedJobsContext);
   if (!context) {
-    throw new Error("useSavedJobs must be used within a SavedJobsProvider");
+    throw new Error('useSavedJobs must be used within a SavedJobsProvider');
   }
   return context;
 };

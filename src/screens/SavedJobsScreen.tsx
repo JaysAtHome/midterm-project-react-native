@@ -30,7 +30,6 @@ const SavedJobsScreen = ({ navigation }: Props) => {
   const { colors, isDarkMode, toggleTheme } = useTheme();
   const [isLoading, setIsLoading] = React.useState(false);
 
-  // Fallback error color if not defined in theme
   const errorColor = '#dc3545';
 
   useLayoutEffect(() => {
@@ -126,7 +125,6 @@ const SavedJobsScreen = ({ navigation }: Props) => {
           Salary: {formatSalary(item.minSalary, item.maxSalary)}
         </Text>
         <View style={styles.buttonContainer}>
-        // Update the remove button style in the renderJobItem function:
         <TouchableOpacity
         style={[
             styles.button,

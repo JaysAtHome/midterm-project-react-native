@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useLayoutEffect } from 'react';
+import React, { useEffect, useState, useLayoutEffect, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,8 @@ import {
   TextInput,
   StyleSheet,
   TouchableOpacity,
+  Alert,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconButton } from 'react-native-paper';
@@ -14,61 +16,25 @@ import { useSavedJobs } from '../context/SavedJobsContext';
 import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
 import uuid from 'react-native-uuid';
-import Modal from 'react-native-modal';
 import { StackNavigationProp } from '@react-navigation/stack';
 import { RootStackParamList } from '../navigation/roottypes';
+import { Job } from '../types/jobtypes';
 
-interface Job {
-  id: string;
-  title: string;
-  companyName: string;
-  description: string;
-  minSalary: number | null;
-  maxSalary: number | null;
-}
-
-type JobFinderScreenNavigationProp = StackNavigationProp<
-  RootStackParamList,
-  'JobFinder'
->;
+type JobFinderScreenNavigationProp = StackNavigationProp<RootStackParamList, 'JobFinder'>;
 
 interface Props {
   navigation: JobFinderScreenNavigationProp;
 }
 
 const JobFinderScreen = ({ navigation }: Props) => {
-  const { savedJobs, saveJob } = useSavedJobs();
+  const { savedJobs, saveJob, isJobSaved } = useSavedJobs();
   const { colors, isDarkMode, toggleTheme } = useTheme();
-  const [isModalVisible, setModalVisible] = useState(false);
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [filteredJobs, setFilteredJobs] = useState<Job[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    fetchJobs();
-  }, []);
-
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerRight: () => (
-        <View style={{ flexDirection: 'row' }}>
-          <IconButton
-            icon={isDarkMode ? 'white-balance-sunny' : 'weather-night'}
-            onPress={toggleTheme}
-            iconColor={colors.text} // Changed from 'color' to 'iconColor'
-            />
-          <IconButton
-            icon="bookmark"
-            onPress={() => navigation.navigate('SavedJobs')}
-            iconColor={colors.text} // Changed from 'color' to 'iconColor'
-            />
-        </View>
-      ),
-    });
-  }, [navigation, isDarkMode, colors.text]);
-
-  const fetchJobs = async () => {
+  const fetchJobs = useCallback(async () => {
     try {
       setLoading(true);
       const response = await axios.get('https://empllo.com/api/v1');
@@ -81,16 +47,53 @@ const JobFinderScreen = ({ navigation }: Props) => {
         maxSalary: job.maxSalary,
       }));
       setJobs(jobsWithIds);
-      setFilteredJobs(jobsWithIds);
-      setLoading(false);
     } catch (error) {
       console.error('Error fetching jobs:', error);
+      Alert.alert('Error', 'Failed to fetch jobs. Please try again later.');
+    } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, []);
 
-  const cleanDescription = (htmlString: string): string => {
-    let decodedString = htmlString
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchJobs();
+  }, [fetchJobs]);
+
+  useEffect(() => {
+    fetchJobs();
+  }, [fetchJobs]);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <View style={{ flexDirection: 'row' }}>
+          <IconButton
+            icon={isDarkMode ? 'white-balance-sunny' : 'weather-night'}
+            onPress={toggleTheme}
+            iconColor={colors.text}
+            testID="themeToggle"
+          />
+          <IconButton
+            icon="bookmark"
+            onPress={() => {
+              if (savedJobs.length > 0) {
+                navigation.navigate('SavedJobs');
+              } else {
+                Alert.alert('No Saved Jobs', 'You have no saved jobs yet.');
+              }
+            }}
+            iconColor={colors.text}
+            testID="savedJobsButton"
+          />
+        </View>
+      ),
+    });
+  }, [navigation, isDarkMode, colors.text, savedJobs]);
+
+  const cleanDescription = useCallback((htmlString: string): string => {
+    return htmlString
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&amp;/g, '&')
@@ -99,23 +102,31 @@ const JobFinderScreen = ({ navigation }: Props) => {
       .replace(/&nbsp;/g, ' ')
       .replace(/u003c/g, '<')
       .replace(/u003e/g, '>')
-      .replace(/\\"/g, '"');
+      .replace(/\\"/g, '"')
+      .replace(/<\/?[^>]+(>|$)/g, '')
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+      .trim();
+  }, []);
 
-    decodedString = decodedString.replace(/<\/?[^>]+(>|$)/g, '');
-    decodedString = decodedString.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-
-    return decodedString.trim();
-  };
-
-  const formatSalary = (min: number | null, max: number | null): string => {
+  const formatSalary = useCallback((min: number | null, max: number | null): string => {
     if (min === null && max === null) return 'Not specified';
-    if (min === null) return `Up to $${max}`;
-    if (max === null) return `From $${min}`;
-    return `$${min} - $${max}`;
-  };
+    if (min === null) return `Up to $${max?.toLocaleString()}`;
+    if (max === null) return `From $${min?.toLocaleString()}`;
+    return `$${min?.toLocaleString()} - $${max?.toLocaleString()}`;
+  }, []);
 
-  const renderJobItem = ({ item }: { item: Job }) => {
-    const isSaved = savedJobs.some((saved) => saved.id === item.id);
+  const filteredJobs = useMemo(() => {
+    if (!search) return jobs;
+    const searchTerm = search.toLowerCase();
+    return jobs.filter(
+      (job) =>
+        job.title.toLowerCase().includes(searchTerm) ||
+        job.companyName.toLowerCase().includes(searchTerm)
+    );
+  }, [jobs, search]);
+
+  const renderJobItem = useCallback(({ item }: { item: Job }) => {
+    const isSaved = isJobSaved(item.id);
     const cleanedDescription = cleanDescription(item.description);
 
     return (
@@ -126,7 +137,8 @@ const JobFinderScreen = ({ navigation }: Props) => {
             backgroundColor: colors.cardBackground,
             borderColor: colors.border,
           },
-        ]}>
+        ]}
+        testID={`jobCard-${item.id}`}>
         <Text style={[styles.jobTitle, { color: colors.text }]}>{item.title}</Text>
         <Text style={[styles.companyText, { color: colors.text }]}>
           Company: {item.companyName}
@@ -149,8 +161,9 @@ const JobFinderScreen = ({ navigation }: Props) => {
                 borderColor: colors.border,
               },
             ]}
-            onPress={() => saveJob(item)}
-            disabled={isSaved}>
+            onPress={() => !isSaved && saveJob(item)}
+            disabled={isSaved}
+            testID={`saveButton-${item.id}`}>
             <Text
               style={[
                 styles.buttonText,
@@ -166,54 +179,26 @@ const JobFinderScreen = ({ navigation }: Props) => {
                 jobId: item.id,
                 fromSavedJobs: false,
               })
-            }>
+            }
+            testID={`applyButton-${item.id}`}>
             <Text style={[styles.buttonText, { color: '#fff' }]}>Apply</Text>
           </TouchableOpacity>
         </View>
       </View>
     );
-  };
+  }, [colors, isJobSaved, cleanDescription, formatSalary, saveJob, navigation]);
+
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={[styles.loadingContainer, { backgroundColor: colors.background }]}>
+        <ActivityIndicator size="large" color={colors.primary} testID="loadingIndicator" />
+      </SafeAreaView>
+    );
+  }
 
   return (
     <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.background }]}>
       <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <Modal
-          isVisible={isModalVisible}
-          onBackdropPress={() => setModalVisible(false)}
-          style={styles.bottomModal}
-          swipeDirection="down"
-          onSwipeComplete={() => setModalVisible(false)}>
-          <View
-            style={[
-              styles.modalContainer,
-              { backgroundColor: colors.cardBackground },
-            ]}>
-            <TouchableOpacity
-              style={[
-                styles.modalButton,
-                { borderBottomColor: colors.border },
-              ]}
-              onPress={() => {
-                setModalVisible(false);
-                navigation.navigate('SavedJobs');
-              }}>
-              <Text style={[styles.modalText, { color: colors.text }]}>
-                View Saved Jobs
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[
-                styles.modalButton,
-                { borderBottomColor: colors.border },
-              ]}
-              onPress={() => setModalVisible(false)}>
-              <Text style={[styles.modalText, { color: colors.text }]}>
-                View Available Jobs
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </Modal>
-
         <TextInput
           style={[
             styles.searchBar,
@@ -227,17 +212,29 @@ const JobFinderScreen = ({ navigation }: Props) => {
           placeholderTextColor={colors.text}
           value={search}
           onChangeText={setSearch}
+          testID="searchInput"
         />
 
-        {loading ? (
-          <ActivityIndicator size="large" color={colors.primary} />
-        ) : (
-          <FlatList
-            data={filteredJobs}
-            keyExtractor={(item) => item.id}
-            renderItem={renderJobItem}
-          />
-        )}
+        <FlatList
+          data={filteredJobs}
+          keyExtractor={(item) => item.id}
+          renderItem={renderJobItem}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={onRefresh}
+              tintColor={colors.primary}
+            />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <Text style={[styles.emptyText, { color: colors.text }]}>
+                {search ? 'No jobs match your search' : 'No jobs available'}
+              </Text>
+            </View>
+          }
+          contentContainerStyle={styles.listContent}
+        />
       </View>
     </SafeAreaView>
   );
@@ -250,6 +247,24 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  listContent: {
+    flexGrow: 1,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  emptyText: {
+    fontSize: 16,
+    textAlign: 'center',
   },
   searchBar: {
     height: 50,
@@ -310,24 +325,6 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 16,
     fontWeight: '500',
-  },
-  bottomModal: {
-    justifyContent: 'flex-end',
-    margin: 0,
-  },
-  modalContainer: {
-    padding: 20,
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-  },
-  modalButton: {
-    padding: 15,
-    borderBottomWidth: 1,
-  },
-  modalText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    textAlign: 'center',
   },
 });
 
